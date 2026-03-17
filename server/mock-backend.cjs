@@ -1,0 +1,272 @@
+const http = require("http");
+const fs = require("fs/promises");
+const path = require("path");
+const crypto = require("crypto");
+
+const PORT = Number(process.env.MOCK_BACKEND_PORT || 3001);
+const DB_PATH = path.join(__dirname, "..", "mock-data", "pedulichain-db.json");
+
+const defaultDb = {
+  campaigns: [
+    {
+      address: "0x1000000000000000000000000000000000000001",
+      title: "Clean Water for Rural Communities",
+      description: "Providing access to clean drinking water for remote villages in developing regions.",
+      category: "Environment",
+      coordinator: "0x1234567890123456789012345678901234567890",
+      goal: "5000000000000000000",
+      deadline: 1798675200,
+      initialDeposit: "250000000000000000",
+      txHash: "0x3a8f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a101",
+      createdAt: "2026-03-17T09:00:00.000Z",
+      metaCID: "peduli:seed-1",
+      donations: [
+        {
+          donor: "0x1111111111111111111111111111111111111111",
+          amount: "1500000000000000000",
+          timestamp: 1777651200,
+          txHash: "0x3c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90001"
+        },
+        {
+          donor: "0x2222222222222222222222222222222222222222",
+          amount: "2250000000000000000",
+          timestamp: 1777737600,
+          txHash: "0x3c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90002"
+        }
+      ]
+    },
+    {
+      address: "0x1000000000000000000000000000000000000002",
+      title: "Education for Underprivileged Children",
+      description: "Building schools and providing educational resources for children in need.",
+      category: "Education",
+      coordinator: "0x2345678901234567890123456789012345678901",
+      goal: "8000000000000000000",
+      deadline: 1803945600,
+      initialDeposit: "500000000000000000",
+      txHash: "0x7a7f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a202",
+      createdAt: "2026-03-17T09:15:00.000Z",
+      metaCID: "peduli:seed-2",
+      donations: [
+        {
+          donor: "0x3333333333333333333333333333333333333333",
+          amount: "3200000000000000000",
+          timestamp: 1777824000,
+          txHash: "0x6c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90003"
+        },
+        {
+          donor: "0x4444444444444444444444444444444444444444",
+          amount: "3200000000000000000",
+          timestamp: 1777910400,
+          txHash: "0x6c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90004"
+        }
+      ]
+    },
+    {
+      address: "0x1000000000000000000000000000000000000003",
+      title: "Medical Aid for Disaster Relief",
+      description: "Emergency medical supplies and support for natural disaster victims.",
+      category: "Healthcare",
+      coordinator: "0x3456789012345678901234567890123456789012",
+      goal: "10000000000000000000",
+      deadline: 1796083200,
+      initialDeposit: "1000000000000000000",
+      txHash: "0x8b7f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a303",
+      createdAt: "2026-03-17T09:30:00.000Z",
+      metaCID: "peduli:seed-3",
+      donations: [
+        {
+          donor: "0x5555555555555555555555555555555555555555",
+          amount: "4000000000000000000",
+          timestamp: 1777996800,
+          txHash: "0x9c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90005"
+        },
+        {
+          donor: "0x6666666666666666666666666666666666666666",
+          amount: "6000000000000000000",
+          timestamp: 1778083200,
+          txHash: "0x9c8e3a6397005a5703e4d81f6337c6d5ac3b1f4f74c1122f79d7ab2ee1c90006"
+        }
+      ]
+    }
+  ]
+};
+
+const sendJson = (res, statusCode, payload) => {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+  });
+  res.end(JSON.stringify(payload, null, 2));
+};
+
+const readBody = async (req) => {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  if (!chunks.length) {
+    return {};
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+};
+
+const ensureDb = async () => {
+  await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+
+  try {
+    await fs.access(DB_PATH);
+  } catch {
+    await fs.writeFile(DB_PATH, JSON.stringify(defaultDb, null, 2));
+  }
+};
+
+const readDb = async () => {
+  await ensureDb();
+  const raw = await fs.readFile(DB_PATH, "utf8");
+  return JSON.parse(raw);
+};
+
+const writeDb = async (db) => {
+  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+};
+
+const fakeHash = () => `0x${crypto.randomBytes(32).toString("hex")}`;
+const fakeAddress = () => `0x${crypto.randomBytes(20).toString("hex")}`;
+
+const normalizeCampaign = (campaign) => ({
+  ...campaign,
+  donations: [...campaign.donations].sort((a, b) => b.timestamp - a.timestamp)
+});
+
+const notFound = (res, message = "Resource not found") => sendJson(res, 404, { error: message });
+
+const server = http.createServer(async (req, res) => {
+  if (!req.url) {
+    return notFound(res);
+  }
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+    });
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const pathname = url.pathname;
+
+  try {
+    if (req.method === "GET" && pathname === "/api/mock/health") {
+      return sendJson(res, 200, { ok: true, mode: "mock-json", dbPath: DB_PATH });
+    }
+
+    if (req.method === "GET" && pathname === "/api/mock/campaigns") {
+      const db = await readDb();
+      return sendJson(res, 200, db.campaigns.map(normalizeCampaign));
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/api/mock/campaigns/")) {
+      const campaignId = decodeURIComponent(pathname.replace("/api/mock/campaigns/", ""));
+      const db = await readDb();
+      const campaign = db.campaigns.find((item) => item.address.toLowerCase() === campaignId.toLowerCase());
+
+      if (!campaign) {
+        return notFound(res, "Campaign not found");
+      }
+
+      return sendJson(res, 200, normalizeCampaign(campaign));
+    }
+
+    if (req.method === "POST" && pathname === "/api/mock/campaigns") {
+      const db = await readDb();
+      const body = await readBody(req);
+
+      if (!body.title || !body.description || !body.category) {
+        return sendJson(res, 400, { error: "Missing required campaign fields" });
+      }
+
+      const createTxHash = fakeHash();
+      const donationTxHash = body.initialDeposit && BigInt(body.initialDeposit) > 0n ? fakeHash() : "";
+      const campaign = {
+        address: fakeAddress(),
+        title: String(body.title).trim(),
+        description: String(body.description).trim(),
+        category: String(body.category).trim(),
+        coordinator: body.coordinator || fakeAddress(),
+        goal: String(body.goal || "0"),
+        deadline: Number(body.deadline || Math.floor(Date.now() / 1000)),
+        initialDeposit: String(body.initialDeposit || "0"),
+        txHash: donationTxHash || createTxHash,
+        createdAt: new Date().toISOString(),
+        metaCID: `peduli:mock-${crypto.randomUUID()}`,
+        donations: []
+      };
+
+      if (BigInt(campaign.initialDeposit) > 0n) {
+        campaign.donations.push({
+          donor: campaign.coordinator,
+          amount: campaign.initialDeposit,
+          timestamp: Math.floor(Date.now() / 1000),
+          txHash: donationTxHash
+        });
+      }
+
+      db.campaigns.unshift(campaign);
+      await writeDb(db);
+
+      return sendJson(res, 201, {
+        campaign: normalizeCampaign(campaign),
+        createTxHash,
+        donationTxHash
+      });
+    }
+
+    if (req.method === "POST" && pathname.endsWith("/donations") && pathname.startsWith("/api/mock/campaigns/")) {
+      const campaignId = decodeURIComponent(
+        pathname.replace("/api/mock/campaigns/", "").replace(/\/donations$/, "")
+      );
+      const db = await readDb();
+      const campaign = db.campaigns.find((item) => item.address.toLowerCase() === campaignId.toLowerCase());
+
+      if (!campaign) {
+        return notFound(res, "Campaign not found");
+      }
+
+      const body = await readBody(req);
+      if (!body.donor || !body.amount || BigInt(body.amount) <= 0n) {
+        return sendJson(res, 400, { error: "Invalid donation payload" });
+      }
+
+      const txHash = fakeHash();
+      campaign.donations.unshift({
+        donor: body.donor,
+        amount: String(body.amount),
+        timestamp: Math.floor(Date.now() / 1000),
+        txHash
+      });
+
+      await writeDb(db);
+      return sendJson(res, 201, { txHash, campaign: normalizeCampaign(campaign) });
+    }
+
+    return notFound(res);
+  } catch (error) {
+    return sendJson(res, 500, {
+      error: error instanceof Error ? error.message : "Unknown mock backend error"
+    });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Mock backend listening on http://localhost:${PORT}`);
+  console.log(`Mock database: ${DB_PATH}`);
+});

@@ -1,0 +1,189 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* DonateChain Design System - Blockchain Charity Platform */
+
+@layer base {
+  :root {
+    /* Core blockchain-inspired palette */
+    --background: 222 84% 5%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 84% 6%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 84% 6%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Blockchain blue primary */
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 84% 5%;
+    --primary-glow: 217 91% 70%;
+
+    /* Charity green secondary */
+    --secondary: 142 76% 36%;
+    --secondary-foreground: 210 40% 98%;
+    --secondary-glow: 142 76% 46%;
+
+    --muted: 217 32% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Trust/success accent */
+    --accent: 142 76% 36%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Warning/urgent */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 32% 17%;
+    --input: 217 32% 17%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.75rem;
+
+    /* Custom gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-secondary: linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--secondary-glow)));
+    --gradient-mesh: radial-gradient(circle at 20% 50%, hsl(var(--primary) / 0.3) 0%, transparent 50%), 
+                     radial-gradient(circle at 80% 20%, hsl(var(--secondary) / 0.3) 0%, transparent 50%),
+                     radial-gradient(circle at 40% 80%, hsl(var(--accent) / 0.2) 0%, transparent 50%);
+
+    /* Blockchain-specific effects */
+    --blockchain-glow: 0 0 30px hsl(var(--primary) / 0.5);
+    --charity-glow: 0 0 25px hsl(var(--secondary) / 0.4);
+    --card-shadow: 0 10px 40px -10px hsl(var(--primary) / 0.2);
+
+    /* Animation variables */
+    --transition-smooth: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .light {
+    /* Light mode for accessibility */
+    --background: 0 0% 100%;
+    --foreground: 222 84% 5%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 84% 5%;
+    --primary: 217 91% 50%;
+    --secondary: 142 76% 30%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground overflow-x-hidden;
+    background: var(--gradient-mesh), hsl(var(--background));
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted/30;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/50 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary/70;
+  }
+
+  /* Blockchain glow effects */
+  .blockchain-glow {
+    box-shadow: var(--blockchain-glow);
+  }
+
+  .charity-glow {
+    box-shadow: var(--charity-glow);
+  }
+
+  /* 3D transform utilities */
+  .flip-card {
+    perspective: 1000px;
+  }
+
+  .flip-card-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    transition: transform 0.8s;
+    transform-style: preserve-3d;
+  }
+
+  .flip-card:hover .flip-card-inner {
+    transform: rotateY(180deg);
+  }
+
+  .flip-card-front, .flip-card-back {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+
+  .flip-card-back {
+    transform: rotateY(180deg);
+  }
+
+  /* Liquid progress animation */
+  @keyframes liquid-flow {
+    0%, 100% { transform: translateX(-100%) skew(-15deg); }
+    50% { transform: translateX(0%) skew(15deg); }
+  }
+
+  .liquid-progress {
+    overflow: hidden;
+    position: relative;
+  }
+
+  .liquid-progress::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    animation: liquid-flow 3s infinite;
+  }
+}
