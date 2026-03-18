@@ -7,6 +7,40 @@ const PORT = Number(process.env.MOCK_BACKEND_PORT || 3001);
 const DB_PATH = path.join(__dirname, "..", "mock-data", "pedulichain-db.json");
 
 const defaultDb = {
+  users: [
+    {
+      id: "usr-gmail-1",
+      provider: "gmail",
+      name: "Alex Carter",
+      username: "alexcarter",
+      email: "alexcarter@gmail.com",
+      passwordHash: crypto.createHash("sha256").update("Password123!").digest("hex"),
+      createdAt: "2026-03-17T08:00:00.000Z"
+    }
+  ],
+  googleAccounts: [
+    {
+      id: "usr-google-1",
+      provider: "google",
+      name: "Emma Wilson",
+      email: "emma.wilson@gmail.com",
+      username: "emma.wilson"
+    },
+    {
+      id: "usr-google-2",
+      provider: "google",
+      name: "Noah Martinez",
+      email: "noah.martinez@gmail.com",
+      username: "noah.martinez"
+    },
+    {
+      id: "usr-google-3",
+      provider: "google",
+      name: "Sophia Nguyen",
+      email: "sophia.nguyen@gmail.com",
+      username: "sophia.nguyen"
+    }
+  ],
   campaigns: [
     {
       address: "0x1000000000000000000000000000000000000001",
@@ -126,18 +160,32 @@ const ensureDb = async () => {
   }
 };
 
+const normalizeDb = (db) => ({
+  users: Array.isArray(db.users) ? db.users : defaultDb.users,
+  googleAccounts: Array.isArray(db.googleAccounts) ? db.googleAccounts : defaultDb.googleAccounts,
+  campaigns: Array.isArray(db.campaigns) ? db.campaigns : defaultDb.campaigns
+});
+
 const readDb = async () => {
   await ensureDb();
   const raw = await fs.readFile(DB_PATH, "utf8");
-  return JSON.parse(raw);
+  return normalizeDb(JSON.parse(raw));
 };
 
 const writeDb = async (db) => {
-  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
+  await fs.writeFile(DB_PATH, JSON.stringify(normalizeDb(db), null, 2));
 };
 
 const fakeHash = () => `0x${crypto.randomBytes(32).toString("hex")}`;
 const fakeAddress = () => `0x${crypto.randomBytes(20).toString("hex")}`;
+const hashPassword = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
+const toAuthUser = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  username: user.username,
+  provider: user.provider
+});
 
 const normalizeCampaign = (campaign) => ({
   ...campaign,
@@ -167,6 +215,99 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && pathname === "/api/mock/health") {
       return sendJson(res, 200, { ok: true, mode: "mock-json", dbPath: DB_PATH });
+    }
+
+    if (req.method === "GET" && pathname === "/api/mock/auth/google-accounts") {
+      const db = await readDb();
+      return sendJson(res, 200, {
+        accounts: db.googleAccounts.map(toAuthUser)
+      });
+    }
+
+    if (req.method === "POST" && pathname === "/api/mock/auth/register") {
+      const db = await readDb();
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const fullName = String(body.fullName || "").trim();
+      const username = String(body.username || "").trim();
+      const password = String(body.password || "");
+      const confirmPassword = String(body.confirmPassword || "");
+
+      if (!/^[^\s@]+@gmail\.com$/i.test(email)) {
+        return sendJson(res, 400, { error: "Please enter a valid Gmail address." });
+      }
+
+      if (!fullName) {
+        return sendJson(res, 400, { error: "Full name is required." });
+      }
+
+      if (!username) {
+        return sendJson(res, 400, { error: "Username is required." });
+      }
+
+      if (password.length < 8) {
+        return sendJson(res, 400, { error: "Password must be at least 8 characters long." });
+      }
+
+      if (password !== confirmPassword) {
+        return sendJson(res, 400, { error: "Password confirmation does not match." });
+      }
+
+      const emailTaken = db.users.some((user) => user.email.toLowerCase() === email);
+      if (emailTaken) {
+        return sendJson(res, 409, { error: "An account with this Gmail already exists." });
+      }
+
+      const usernameTaken = db.users.some((user) => String(user.username || "").toLowerCase() === username.toLowerCase());
+      if (usernameTaken) {
+        return sendJson(res, 409, { error: "This username is already in use." });
+      }
+
+      const user = {
+        id: `usr-gmail-${crypto.randomUUID()}`,
+        provider: "gmail",
+        name: fullName,
+        username,
+        email,
+        passwordHash: hashPassword(password),
+        createdAt: new Date().toISOString()
+      };
+
+      db.users.unshift(user);
+      await writeDb(db);
+
+      return sendJson(res, 201, { user: toAuthUser(user) });
+    }
+
+    if (req.method === "POST" && pathname === "/api/mock/auth/login") {
+      const db = await readDb();
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+
+      if (!email || !password) {
+        return sendJson(res, 400, { error: "Email and password are required." });
+      }
+
+      const user = db.users.find((item) => item.email.toLowerCase() === email && item.provider === "gmail");
+      if (!user || user.passwordHash !== hashPassword(password)) {
+        return sendJson(res, 401, { error: "Invalid Gmail or password." });
+      }
+
+      return sendJson(res, 200, { user: toAuthUser(user) });
+    }
+
+    if (req.method === "POST" && pathname === "/api/mock/auth/google-login") {
+      const db = await readDb();
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const account = db.googleAccounts.find((item) => item.email.toLowerCase() === email);
+
+      if (!account) {
+        return sendJson(res, 404, { error: "Google account not found." });
+      }
+
+      return sendJson(res, 200, { user: toAuthUser(account) });
     }
 
     if (req.method === "GET" && pathname === "/api/mock/campaigns") {
@@ -251,7 +392,9 @@ const server = http.createServer(async (req, res) => {
         donor: body.donor,
         amount: String(body.amount),
         timestamp: Math.floor(Date.now() / 1000),
-        txHash
+        txHash,
+        supporterName: body.supporterName ? String(body.supporterName).trim() : undefined,
+        message: body.message ? String(body.message).trim() : undefined
       });
 
       await writeDb(db);

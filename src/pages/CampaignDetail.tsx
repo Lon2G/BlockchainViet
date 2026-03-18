@@ -1,36 +1,36 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAccount } from 'wagmi'
-import Navbar from '@/components/layout/Navbar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { donateToCampaign, getMockAccountAddress, getStoredDonations, getTrackedCampaignDetail, isCampaignAddress, saveDonationRecord } from '@/lib/campaigns'
+import { donateToCampaign, getStoredDonations, getTrackedCampaignDetail, isCampaignAddress, saveDonationRecord } from '@/lib/campaigns'
+import { getDemoCampaignById } from '@/lib/demoCampaigns'
 import { formatEther, IS_MOCK_BACKEND, parseEther, shortenAddress } from '@/lib/web3'
-import { ArrowLeft, Heart, Users, Clock, Vote, CheckCircle, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Heart, Users, Clock, Vote, CheckCircle, AlertCircle, Mail, Wallet } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-
-const mockCampaign = {
-  id: '1',
-  title: 'Clean Water for Rural Communities',
-  description: 'Providing access to clean drinking water for remote villages in developing regions. This initiative aims to install water purification systems and dig wells in areas where clean water is scarce.',
-  coordinator: '0x1234567890123456789012345678901234567890',
-  goal: BigInt('5000000000000000000'),
-  raised: BigInt('3750000000000000000'),
-  deadline: Math.floor(Date.now() / 1000) + 86400 * 30,
-  donorCount: 89,
-  category: 'Environment'
-}
+import { useAuth } from '@/contexts/AuthContext'
+import { useMockWallet } from '@/contexts/MockWalletContext'
+import { useWishlist } from '@/contexts/WishlistContext'
 
 const mockDonations = [
   { donor: '0x1111111111111111111111111111111111111111', amount: '0.5', timestamp: '2024-01-15' },
   { donor: '0x2222222222222222222222222222222222222222', amount: '1.0', timestamp: '2024-01-14' },
   { donor: '0x3333333333333333333333333333333333333333', amount: '0.25', timestamp: '2024-01-13' }
 ]
+
+type DonationView = {
+  donor: string
+  amount: string
+  timestamp: string
+  supporterName?: string
+  message?: string
+}
 
 const mockProposals = [
   {
@@ -61,10 +61,16 @@ export default function CampaignDetail() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { address, isConnected } = useAccount()
+  const { isAuthenticated, openAuthDialog, user } = useAuth()
+  const { wallet, openWalletDialog } = useMockWallet()
+  const { isFollowed, toggleFollow } = useWishlist()
 
   const [donationAmount, setDonationAmount] = useState('')
+  const [supporterName, setSupporterName] = useState(user?.name ?? '')
+  const [donationMessage, setDonationMessage] = useState('')
   const [isDonating, setIsDonating] = useState(false)
   const [mockDonationVersion, setMockDonationVersion] = useState(0)
+  const [localDonations, setLocalDonations] = useState(() => (!IS_MOCK_BACKEND && id ? getStoredDonations(id) : []))
 
   const isTracked = isCampaignAddress(id)
   const { data: trackedCampaign, isLoading, refetch } = useQuery({
@@ -73,26 +79,30 @@ export default function CampaignDetail() {
     enabled: Boolean(id) && (IS_MOCK_BACKEND || isTracked)
   })
 
-  const localDonations = !IS_MOCK_BACKEND && id ? getStoredDonations(id) : []
   const mockRaisedExtra = localDonations.reduce((sum, donation) => sum + donation.amount, 0n)
+  const fallbackCampaign = getDemoCampaignById(id)
   const campaign = IS_MOCK_BACKEND
     ? trackedCampaign
-    : trackedCampaign ?? (isTracked ? null : {
-        ...mockCampaign,
-        raised: mockCampaign.raised + mockRaisedExtra,
-        donorCount: mockCampaign.donorCount + localDonations.length
+    : trackedCampaign ?? (isTracked || !fallbackCampaign ? null : {
+        ...fallbackCampaign,
+        raised: fallbackCampaign.raised + mockRaisedExtra,
+        donorCount: fallbackCampaign.donorCount + localDonations.length
       })
-  const donations = (IS_MOCK_BACKEND || isTracked)
+  const donations: DonationView[] = (IS_MOCK_BACKEND || isTracked)
     ? trackedCampaign?.donations.map((donation) => ({
         donor: donation.donor,
         amount: formatEther(donation.amount),
-        timestamp: new Date(donation.timestamp * 1000).toLocaleDateString()
+        timestamp: new Date(donation.timestamp * 1000).toLocaleDateString(),
+        supporterName: donation.supporterName,
+        message: donation.message
       })) ?? []
     : [
         ...localDonations.map((donation) => ({
           donor: donation.donor,
           amount: formatEther(donation.amount),
-          timestamp: new Date(donation.timestamp * 1000).toLocaleDateString()
+          timestamp: new Date(donation.timestamp * 1000).toLocaleDateString(),
+          supporterName: donation.supporterName,
+          message: donation.message
         })),
         ...mockDonations
       ]
@@ -101,6 +111,23 @@ export default function CampaignDetail() {
   const daysLeft = campaign
     ? Math.max(0, Math.ceil((campaign.deadline * 1000 - Date.now()) / (1000 * 60 * 60 * 24)))
     : 0
+  const hasWalletConnection = IS_MOCK_BACKEND ? Boolean(wallet) : isConnected
+  const followed = id ? isFollowed(id) : false
+
+  useEffect(() => {
+    if (!supporterName && user?.name) {
+      setSupporterName(user.name)
+    }
+  }, [supporterName, user?.name])
+
+  useEffect(() => {
+    if (IS_MOCK_BACKEND || !id) {
+      setLocalDonations([])
+      return
+    }
+
+    setLocalDonations(getStoredDonations(id))
+  }, [id, mockDonationVersion])
 
   const handleDonate = async () => {
     if (!donationAmount || Number(donationAmount) <= 0) {
@@ -112,10 +139,24 @@ export default function CampaignDetail() {
       return
     }
 
-    if (!IS_MOCK_BACKEND && isTracked && !isConnected) {
+    if (!isAuthenticated) {
+      openAuthDialog()
+      toast({
+        title: 'Sign-in required',
+        description: 'Please sign in before donating.',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    if (!hasWalletConnection) {
+      if (IS_MOCK_BACKEND) {
+        openWalletDialog()
+      }
+
       toast({
         title: 'Wallet not connected',
-        description: 'Connect MetaMask before sending SepoliaETH.',
+        description: 'Please connect a wallet before donating.',
         variant: 'destructive'
       })
       return
@@ -125,7 +166,10 @@ export default function CampaignDetail() {
 
     try {
       if ((IS_MOCK_BACKEND || isTracked) && id) {
-        const txHash = await donateToCampaign(id, parseEther(donationAmount))
+        await donateToCampaign(id, parseEther(donationAmount), {
+          supporterName,
+          message: donationMessage
+        })
         await Promise.all([
           refetch(),
           queryClient.invalidateQueries({ queryKey: ['tracked-campaigns'] })
@@ -142,9 +186,11 @@ export default function CampaignDetail() {
         }
 
         saveDonationRecord(id, {
-          donor: address ?? getMockAccountAddress(),
+          donor: wallet?.address ?? address ?? '0x0000000000000000000000000000000000000000',
           amount: parseEther(donationAmount),
-          timestamp: Math.floor(Date.now() / 1000)
+          timestamp: Math.floor(Date.now() / 1000),
+          supporterName: supporterName.trim() || undefined,
+          message: donationMessage.trim() || undefined
         })
 
         await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -156,6 +202,7 @@ export default function CampaignDetail() {
       }
 
       setDonationAmount('')
+      setDonationMessage('')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Something went wrong. Please try again.'
       toast({
@@ -166,6 +213,20 @@ export default function CampaignDetail() {
     } finally {
       setIsDonating(false)
     }
+  }
+
+  const handleFollow = () => {
+    if (!id) {
+      return
+    }
+
+    toggleFollow(id)
+    toast({
+      title: followed ? 'Removed from wishlist' : 'Added to wishlist',
+      description: followed
+        ? 'This campaign has been removed from your watchlist.'
+        : 'This campaign has been added to your wishlist for easier tracking.'
+    })
   }
 
   const handleVote = async (proposalId: number, support: boolean) => {
@@ -187,8 +248,6 @@ export default function CampaignDetail() {
 
   if ((IS_MOCK_BACKEND || isTracked) && isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
         <div className="container mx-auto px-4 py-8">
           <Card>
             <CardHeader>
@@ -201,14 +260,11 @@ export default function CampaignDetail() {
             </CardHeader>
           </Card>
         </div>
-      </div>
     )
   }
 
   if (!campaign) {
     return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
         <div className="container mx-auto px-4 py-8">
           <Card>
             <CardHeader>
@@ -220,20 +276,16 @@ export default function CampaignDetail() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button onClick={() => navigate('/')}>Back to Dashboard</Button>
+              <Button onClick={() => navigate('/dashboard')}>Back to Dashboard</Button>
             </CardContent>
           </Card>
         </div>
-      </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-
       <div className="container mx-auto px-4 py-8">
-        <Button variant="ghost" onClick={() => navigate('/')} className="mb-6">
+        <Button variant="ghost" onClick={() => navigate('/dashboard')} className="mb-6">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Dashboard
         </Button>
@@ -255,9 +307,9 @@ export default function CampaignDetail() {
                       </Badge>
                     </div>
                   </div>
-                  <Button variant="charity" size="sm">
+                  <Button variant={followed ? 'secondary' : 'charity'} size="sm" onClick={handleFollow}>
                     <Heart className="w-4 h-4 mr-2" />
-                    Follow
+                    {followed ? 'Following' : 'Follow'}
                   </Button>
                 </div>
                 <CardDescription className="text-base leading-relaxed">
@@ -351,7 +403,13 @@ export default function CampaignDetail() {
                         {donations.map((donation, index) => (
                           <div key={`${donation.donor}-${index}`} className="flex justify-between items-center p-3 bg-muted/50 rounded-lg">
                             <div>
-                              <p className="font-mono text-sm">{shortenAddress(donation.donor)}</p>
+                              <p className="text-sm font-medium">{donation.supporterName || shortenAddress(donation.donor)}</p>
+                              {donation.supporterName && (
+                                <p className="font-mono text-xs text-muted-foreground">{shortenAddress(donation.donor)}</p>
+                              )}
+                              {donation.message && (
+                                <p className="text-xs text-muted-foreground">{donation.message}</p>
+                              )}
                               <p className="text-xs text-muted-foreground">{donation.timestamp}</p>
                             </div>
                             <Badge variant="secondary">{donation.amount} ETH</Badge>
@@ -453,6 +511,44 @@ export default function CampaignDetail() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!isAuthenticated && (
+                  <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4">
+                      <div className="flex items-start gap-3">
+                      <Mail className="mt-0.5 h-4 w-4 text-primary" />
+                      <div className="space-y-2">
+                        <p className="font-medium">Sign in to donate</p>
+                        <p className="text-sm text-muted-foreground">
+                          Donations are only available after the user signs in.
+                        </p>
+                        <Button size="sm" variant="charity" onClick={openAuthDialog}>
+                          Sign In
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isAuthenticated && !hasWalletConnection && (
+                  <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4">
+                    <div className="flex items-start gap-3">
+                      <Wallet className="mt-0.5 h-4 w-4 text-primary" />
+                      <div className="space-y-2">
+                        <p className="font-medium">Connect a wallet before donating</p>
+                        <p className="text-sm text-muted-foreground">
+                          {IS_MOCK_BACKEND
+                            ? 'Select a simulated wallet to complete the donation flow.'
+                            : 'Connect a blockchain wallet to send the transaction.'}
+                        </p>
+                        {IS_MOCK_BACKEND && (
+                          <Button size="sm" variant="blockchain" onClick={openWalletDialog}>
+                            Connect Wallet
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <label htmlFor="amount" className="text-sm font-medium">
                     Amount (ETH)
@@ -463,6 +559,31 @@ export default function CampaignDetail() {
                     placeholder="0.1"
                     value={donationAmount}
                     onChange={(e) => setDonationAmount(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="supporter-name" className="text-sm font-medium">
+                    Your Name
+                  </label>
+                  <Input
+                    id="supporter-name"
+                    placeholder="Nguyen Van A"
+                    value={supporterName}
+                    onChange={(e) => setSupporterName(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="donation-message" className="text-sm font-medium">
+                    Message
+                  </label>
+                  <Textarea
+                    id="donation-message"
+                    placeholder="Wishing this campaign reaches its goal soon."
+                    value={donationMessage}
+                    onChange={(e) => setDonationMessage(e.target.value)}
+                    className="min-h-24"
                   />
                 </div>
 
@@ -489,6 +610,10 @@ export default function CampaignDetail() {
                 >
                   {isDonating
                     ? 'Processing...'
+                    : !isAuthenticated
+                      ? 'Sign In to Donate'
+                    : !hasWalletConnection
+                      ? 'Connect Wallet to Donate'
                     : IS_MOCK_BACKEND
                       ? `Contribute ${donationAmount || '0'} ETH`
                     : isTracked
@@ -508,6 +633,5 @@ export default function CampaignDetail() {
           </div>
         </div>
       </div>
-    </div>
   )
 }
