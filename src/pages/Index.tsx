@@ -1,54 +1,18 @@
 import { useDeferredValue, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import Navbar from '@/components/layout/Navbar'
 import Globe from '@/components/3d/Globe'
 import CampaignCard from '@/components/campaign/CampaignCard'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { ArrowDown, Compass, DollarSign, Plus, TrendingUp, Users } from 'lucide-react'
+import { ArrowDown, Compass, DollarSign, Heart, Plus, TrendingUp, Users } from 'lucide-react'
 import { getTrackedCampaigns } from '@/lib/campaigns'
+import { DEMO_CAMPAIGNS } from '@/lib/demoCampaigns'
 import { formatEther, IS_MOCK_BACKEND } from '@/lib/web3'
-
-const mockCampaigns = [
-  {
-    id: '1',
-    title: 'Clean Water for Rural Communities',
-    description: 'Providing access to clean drinking water for remote villages in developing regions.',
-    category: 'Environment',
-    coordinator: '0x1234567890123456789012345678901234567890',
-    goal: BigInt('5000000000000000000'),
-    raised: BigInt('3750000000000000000'),
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 30,
-    donorCount: 89,
-    position: [1.2, 0.5, 1.5] as [number, number, number]
-  },
-  {
-    id: '2',
-    title: 'Education for Underprivileged Children',
-    description: 'Building schools and providing educational resources for children in need.',
-    category: 'Education',
-    coordinator: '0x2345678901234567890123456789012345678901',
-    goal: BigInt('8000000000000000000'),
-    raised: BigInt('6400000000000000000'),
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 45,
-    donorCount: 156,
-    position: [-1.8, -0.3, 0.8] as [number, number, number]
-  },
-  {
-    id: '3',
-    title: 'Medical Aid for Disaster Relief',
-    description: 'Emergency medical supplies and support for natural disaster victims.',
-    category: 'Healthcare',
-    coordinator: '0x3456789012345678901234567890123456789012',
-    goal: BigInt('10000000000000000000'),
-    raised: BigInt('10000000000000000000'),
-    deadline: Math.floor(Date.now() / 1000) + 86400 * 15,
-    donorCount: 234,
-    position: [0.5, -1.5, -1.2] as [number, number, number]
-  }
-]
+import { useAuth } from '@/contexts/AuthContext'
+import { useMockWallet } from '@/contexts/MockWalletContext'
+import { useWishlist } from '@/contexts/WishlistContext'
 
 type SortOption = 'trending' | 'ending-soon' | 'goal-high' | 'progress'
 type StatusFilter = 'all' | 'active' | 'ending-soon' | 'funded' | 'expired'
@@ -57,6 +21,9 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const exploreSectionRef = useRef<HTMLElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const { isAuthenticated, openAuthDialog } = useAuth()
+  const { wallet, openWalletDialog } = useMockWallet()
+  const { followedCampaignIds } = useWishlist()
   const { data: trackedCampaigns = [] } = useQuery({
     queryKey: ['tracked-campaigns'],
     queryFn: getTrackedCampaigns
@@ -66,7 +33,7 @@ export default function Dashboard() {
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('trending')
   const deferredSearchQuery = useDeferredValue(searchQuery)
-  const campaigns = IS_MOCK_BACKEND ? trackedCampaigns : [...trackedCampaigns, ...mockCampaigns]
+  const campaigns = IS_MOCK_BACKEND ? trackedCampaigns : [...trackedCampaigns, ...DEMO_CAMPAIGNS]
 
   const totalRaised = campaigns.reduce((sum, campaign) => sum + campaign.raised, 0n)
   const totalDonors = campaigns.reduce((sum, campaign) => sum + campaign.donorCount, 0)
@@ -144,6 +111,20 @@ export default function Dashboard() {
     navigate(`/campaign/${campaignId}`)
   }
 
+  const handleCreateCampaign = () => {
+    if (!isAuthenticated) {
+      openAuthDialog()
+      return
+    }
+
+    if (IS_MOCK_BACKEND && !wallet) {
+      openWalletDialog()
+      return
+    }
+
+    navigate('/create')
+  }
+
   const handleDonate = (campaignId: string) => {
     navigate(`/campaign/${campaignId}`)
   }
@@ -153,22 +134,20 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      
+    <>
       {/* Hero Section */}
-      <section className="relative py-20 px-4 sm:px-6 lg:px-8">
+      <section className="relative px-4 pb-8 pt-12 sm:px-6 lg:px-8 lg:pb-10 lg:pt-14">
         <div className="container mx-auto">
-          <div className="text-center mb-12">
-            <h1 className="text-5xl font-bold bg-gradient-primary bg-clip-text text-transparent mb-4">
+          <div className="mb-10 text-center">
+            <h1 className="mb-4 text-5xl font-bold bg-gradient-primary bg-clip-text text-transparent">
               Transparent Charity on Blockchain
             </h1>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
+            <p className="mx-auto mb-6 max-w-2xl text-xl text-muted-foreground">
               Experience the future of charitable giving with complete transparency, 
               community voting, and immutable proof of impact.
             </p>
             <div className="flex gap-4 justify-center">
-              <Button variant="charity" size="xl" onClick={() => navigate('/create')}>
+              <Button variant="charity" size="xl" onClick={handleCreateCampaign}>
                 <Plus className="w-5 h-5 mr-2" />
                 Create Campaign
               </Button>
@@ -176,11 +155,15 @@ export default function Dashboard() {
                 <Compass className="w-5 h-5 mr-2" />
                 Explore Campaigns
               </Button>
+              <Button variant="outline" size="xl" onClick={() => navigate('/wishlist')}>
+                <Heart className="w-5 h-5 mr-2" />
+                Wishlist ({followedCampaignIds.length})
+              </Button>
             </div>
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <div className="mb-2 grid grid-cols-1 gap-6 md:grid-cols-3">
             {stats.map((stat) => {
               const Icon = stat.icon
               return (
@@ -210,13 +193,13 @@ export default function Dashboard() {
       </section>
 
       {/* Interactive Globe */}
-      <section className="py-12 px-4 sm:px-6 lg:px-8">
+      <section className="px-4 pb-12 pt-4 sm:px-6 lg:px-8 lg:pt-6">
         <div className="container mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-8">
+          <h2 className="mb-6 text-center text-3xl font-bold">
             Global Impact Map
           </h2>
           {trackedCampaigns.length > 0 && (
-            <p className="text-center text-sm text-muted-foreground mb-4">
+            <p className="mb-4 text-center text-sm text-muted-foreground">
               Campaigns you create from this workspace appear here automatically.
             </p>
           )}
@@ -364,6 +347,6 @@ export default function Dashboard() {
           )}
         </div>
       </section>
-    </div>
+    </>
   )
 }

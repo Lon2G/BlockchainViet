@@ -1,13 +1,6 @@
 import { Contract, isAddress } from 'ethers'
 import { CONTRACTS, IS_MOCK_BACKEND, MOCK_API_BASE_URL, SEPOLIA_CHAIN, SEPOLIA_CHAIN_ID_HEX, SEPOLIA_RPC_URL, getReadonlyProvider, getWalletProvider } from '@/lib/web3'
-
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>
-    }
-  }
-}
+import { getConnectedMockWalletAddress } from '@/lib/mockWallet'
 
 export interface CampaignRecord {
   address: string
@@ -36,6 +29,8 @@ export interface CampaignDetailData extends CampaignSummary {
     amount: bigint
     timestamp: number
     txHash?: string
+    supporterName?: string
+    message?: string
   }>
 }
 
@@ -44,6 +39,8 @@ export interface DonationRecord {
   amount: bigint
   timestamp: number
   txHash?: string
+  supporterName?: string
+  message?: string
 }
 
 interface MockDonationRecord {
@@ -51,6 +48,8 @@ interface MockDonationRecord {
   amount: string
   timestamp: number
   txHash?: string
+  supporterName?: string
+  message?: string
 }
 
 interface MockCampaignRecord {
@@ -70,7 +69,6 @@ interface MockCampaignRecord {
 
 const STORED_CAMPAIGNS_KEY = 'pedulichain.campaigns.v1'
 const STORED_DONATIONS_KEY = 'pedulichain.donations.v1'
-const MOCK_ACCOUNT_KEY = 'pedulichain.mock.account.v1'
 
 const createMetaId = () => {
   if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
@@ -78,31 +76,6 @@ const createMetaId = () => {
   }
 
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-const randomHex = (bytes: number) => {
-  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
-    const values = new Uint8Array(bytes)
-    globalThis.crypto.getRandomValues(values)
-    return Array.from(values, (value) => value.toString(16).padStart(2, '0')).join('')
-  }
-
-  return Array.from({ length: bytes }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('')
-}
-
-export const getMockAccountAddress = () => {
-  if (typeof window === 'undefined') {
-    return '0x0000000000000000000000000000000000000000'
-  }
-
-  const existing = window.localStorage.getItem(MOCK_ACCOUNT_KEY)
-  if (existing && isAddress(existing)) {
-    return existing
-  }
-
-  const nextAddress = `0x${randomHex(20)}`
-  window.localStorage.setItem(MOCK_ACCOUNT_KEY, nextAddress)
-  return nextAddress
 }
 
 export const CAMPAIGN_FACTORY_ABI = [
@@ -311,7 +284,9 @@ const toCampaignDetail = (campaign: MockCampaignRecord): CampaignDetailData => (
       donor: donation.donor,
       amount: BigInt(donation.amount),
       timestamp: donation.timestamp,
-      txHash: donation.txHash
+      txHash: donation.txHash,
+      supporterName: donation.supporterName,
+      message: donation.message
     }))
     .sort((a, b) => b.timestamp - a.timestamp)
 })
@@ -351,7 +326,7 @@ export const createCampaignOnChain = async (params: {
       method: 'POST',
       body: JSON.stringify({
         ...params,
-        coordinator: params.coordinator || getMockAccountAddress(),
+        coordinator: params.coordinator || getConnectedMockWalletAddress() || '',
         goal: params.goal.toString(),
         initialDeposit: params.initialDeposit.toString()
       })
@@ -425,14 +400,27 @@ export const createCampaignOnChain = async (params: {
   }
 }
 
-export const donateToCampaign = async (campaignAddress: string, amount: bigint) => {
+export const donateToCampaign = async (
+  campaignAddress: string,
+  amount: bigint,
+  metadata?: {
+    supporterName?: string
+    message?: string
+  }
+) => {
   if (IS_MOCK_BACKEND) {
-    const donor = getMockAccountAddress()
+    const donor = getConnectedMockWalletAddress()
+    if (!donor) {
+      throw new Error('Please connect a wallet before donating')
+    }
+
     const payload = await fetchMockApi<{ txHash: string }>(`/campaigns/${encodeURIComponent(campaignAddress)}/donations`, {
       method: 'POST',
       body: JSON.stringify({
         donor,
-        amount: amount.toString()
+        amount: amount.toString(),
+        supporterName: metadata?.supporterName?.trim() || undefined,
+        message: metadata?.message?.trim() || undefined
       })
     })
 
@@ -452,7 +440,9 @@ export const donateToCampaign = async (campaignAddress: string, amount: bigint) 
     donor,
     amount,
     timestamp: Math.floor(Date.now() / 1000),
-    txHash: receipt.hash
+    txHash: receipt.hash,
+    supporterName: metadata?.supporterName?.trim() || undefined,
+    message: metadata?.message?.trim() || undefined
   })
 
   return receipt.hash as string
@@ -543,7 +533,7 @@ export const getTrackedCampaignDetail = async (campaignAddress: string): Promise
     const exists = mergedDonations.some((item) =>
       item.donor.toLowerCase() === donation.donor.toLowerCase() &&
       item.amount === donation.amount &&
-      item.timestamp === donation.timestamp
+      Math.abs(item.timestamp - donation.timestamp) <= 120
     )
 
     if (!exists) {
