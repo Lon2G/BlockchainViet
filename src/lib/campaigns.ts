@@ -17,10 +17,17 @@ export interface CampaignRecord {
 
 export interface CampaignSummary extends CampaignRecord {
   id: string
+  source: 'mock' | 'chain' | 'demo'
   raised: bigint
+  refundedAmount: bigint
+  grossRaisedAmount: bigint
+  withdrawnAmount: bigint
+  withdrawableAmount: bigint
   donorCount: number
   metaCID: string
   position: [number, number, number]
+  fundingStatus: 'active' | 'goal-reached' | 'successful' | 'expired' | 'refunded'
+  disbursementStatus: 'locked' | 'available' | 'withdrawn'
 }
 
 export interface CampaignDetailData extends CampaignSummary {
@@ -31,6 +38,21 @@ export interface CampaignDetailData extends CampaignSummary {
     txHash?: string
     supporterName?: string
     message?: string
+  }>
+  refunds: Array<{
+    donor: string
+    amount: bigint
+    timestamp: number
+    txHash?: string
+    donationTxHash?: string
+    supporterName?: string
+    message?: string
+  }>
+  withdrawals: Array<{
+    recipient: string
+    amount: bigint
+    timestamp: number
+    txHash?: string
   }>
 }
 
@@ -52,6 +74,16 @@ interface MockDonationRecord {
   message?: string
 }
 
+interface MockRefundRecord {
+  donor: string
+  amount: string
+  timestamp: number
+  txHash?: string
+  donationTxHash?: string
+  supporterName?: string
+  message?: string
+}
+
 interface MockCampaignRecord {
   address: string
   title: string
@@ -65,6 +97,20 @@ interface MockCampaignRecord {
   createdAt: string
   metaCID: string
   donations: MockDonationRecord[]
+  refunds: MockRefundRecord[]
+  withdrawals: Array<{
+    recipient: string
+    amount: string
+    timestamp: number
+    txHash?: string
+  }>
+  fundingStatus?: CampaignSummary['fundingStatus']
+  grossRaisedAmount?: string
+  refundedAmount?: string
+  raisedAmount?: string
+  withdrawnAmount?: string
+  withdrawableAmount?: string
+  disbursementStatus?: CampaignSummary['disbursementStatus']
 }
 
 const STORED_CAMPAIGNS_KEY = 'pedulichain.campaigns.v1'
@@ -86,8 +132,13 @@ export const CAMPAIGN_FACTORY_ABI = [
 
 export const CAMPAIGN_ABI = [
   'function donate() payable',
+  'function withdrawFunds()',
+  'function processRefunds()',
   'function getCampaignDetails() view returns (address _coordinator, uint256 _goal, uint256 _deadline, string _metaCID, uint256 _totalRaised, uint256 _donationCount, uint256 _proposalCount)',
-  'function getDonations() view returns ((address donor, uint256 amount, uint256 timestamp)[])'
+  'function getCampaignState() view returns (uint256 _contractBalance, uint256 _totalRefunded, uint256 _totalWithdrawn, uint256 _withdrawableAmount, bool _refundsProcessed, bool _fundsWithdrawn)',
+  'function getDonations() view returns ((address donor, uint256 amount, uint256 timestamp)[])',
+  'function getRefunds() view returns ((address donor, uint256 amount, uint256 timestamp)[])',
+  'function getWithdrawals() view returns ((address recipient, uint256 amount, uint256 timestamp)[])'
 ] as const
 
 const serializeRecord = (record: CampaignRecord) => ({
@@ -200,8 +251,8 @@ export const isCampaignAddress = (value: string | undefined): value is string =>
   return Boolean(value && isAddress(value))
 }
 
-export const ensureSepoliaNetwork = async () => {
-  if (IS_MOCK_BACKEND) {
+export const ensureSepoliaNetwork = async (options?: { force?: boolean }) => {
+  if (IS_MOCK_BACKEND && !options?.force) {
     return
   }
 
@@ -247,8 +298,41 @@ const buildPositionFromAddress = (address: string): [number, number, number] => 
   ]
 }
 
+const deriveFundingStatus = (
+  goal: bigint,
+  deadline: number,
+  totalRaised: bigint,
+  refundsProcessed: boolean
+): CampaignSummary['fundingStatus'] => {
+  if (refundsProcessed) {
+    return 'refunded'
+  }
+
+  const now = Math.floor(Date.now() / 1000)
+  if (deadline <= now) {
+    return totalRaised >= goal ? 'successful' : 'expired'
+  }
+
+  return totalRaised >= goal ? 'goal-reached' : 'active'
+}
+
+const deriveDisbursementStatus = (
+  withdrawableAmount: bigint,
+  fundsWithdrawn: boolean
+): CampaignSummary['disbursementStatus'] => {
+  if (fundsWithdrawn) {
+    return 'withdrawn'
+  }
+
+  return withdrawableAmount > 0n ? 'available' : 'locked'
+}
+
 const getRaisedFromDonations = (donations: MockDonationRecord[]) => (
   donations.reduce((total, donation) => total + BigInt(donation.amount), 0n)
+)
+
+const getRefundedFromRefunds = (refunds: MockRefundRecord[]) => (
+  refunds.reduce((total, refund) => total + BigInt(refund.amount), 0n)
 )
 
 const getDonorCountFromDonations = (donations: MockDonationRecord[]) => (
@@ -271,10 +355,17 @@ const toCampaignRecord = (campaign: MockCampaignRecord): CampaignRecord => ({
 const toCampaignSummary = (campaign: MockCampaignRecord): CampaignSummary => ({
   ...toCampaignRecord(campaign),
   id: campaign.address,
-  raised: getRaisedFromDonations(campaign.donations),
+  source: 'mock',
+  raised: BigInt(campaign.raisedAmount ?? getRaisedFromDonations(campaign.donations).toString()),
+  refundedAmount: BigInt(campaign.refundedAmount ?? getRefundedFromRefunds(campaign.refunds).toString()),
+  grossRaisedAmount: BigInt(campaign.grossRaisedAmount ?? getRaisedFromDonations(campaign.donations).toString()),
+  withdrawnAmount: BigInt(campaign.withdrawnAmount ?? '0'),
+  withdrawableAmount: BigInt(campaign.withdrawableAmount ?? '0'),
   donorCount: getDonorCountFromDonations(campaign.donations),
   metaCID: campaign.metaCID,
-  position: buildPositionFromAddress(campaign.address)
+  position: buildPositionFromAddress(campaign.address),
+  fundingStatus: campaign.fundingStatus ?? 'active',
+  disbursementStatus: campaign.disbursementStatus ?? 'locked'
 })
 
 const toCampaignDetail = (campaign: MockCampaignRecord): CampaignDetailData => ({
@@ -288,8 +379,69 @@ const toCampaignDetail = (campaign: MockCampaignRecord): CampaignDetailData => (
       supporterName: donation.supporterName,
       message: donation.message
     }))
+    .sort((a, b) => b.timestamp - a.timestamp),
+  refunds: campaign.refunds
+    .map((refund) => ({
+      donor: refund.donor,
+      amount: BigInt(refund.amount),
+      timestamp: refund.timestamp,
+      txHash: refund.txHash,
+      donationTxHash: refund.donationTxHash,
+      supporterName: refund.supporterName,
+      message: refund.message
+    }))
+    .sort((a, b) => b.timestamp - a.timestamp),
+  withdrawals: campaign.withdrawals
+    .map((withdrawal) => ({
+      recipient: withdrawal.recipient,
+      amount: BigInt(withdrawal.amount),
+      timestamp: withdrawal.timestamp,
+      txHash: withdrawal.txHash
+    }))
     .sort((a, b) => b.timestamp - a.timestamp)
 })
+
+const buildChainCampaignSummary = async (record: CampaignRecord, provider = getReadonlyProvider()): Promise<CampaignSummary> => {
+  const campaign = new Contract(record.address, CAMPAIGN_ABI, provider)
+  const [
+    coordinator,
+    goal,
+    deadline,
+    metaCID,
+    totalRaised,
+    donationCount
+  ] = await campaign.getCampaignDetails()
+  const [
+    ,
+    totalRefunded,
+    totalWithdrawn,
+    withdrawableAmount,
+    refundsProcessed,
+    fundsWithdrawn
+  ] = await campaign.getCampaignState()
+  const fundingStatus = deriveFundingStatus(goal, Number(deadline), totalRaised, refundsProcessed)
+  const disbursementStatus = deriveDisbursementStatus(withdrawableAmount, fundsWithdrawn)
+  const netRaised = refundsProcessed ? 0n : totalRaised
+
+  return {
+    ...record,
+    id: record.address,
+    source: 'chain',
+    coordinator,
+    goal,
+    deadline: Number(deadline),
+    metaCID,
+    raised: netRaised,
+    refundedAmount: totalRefunded,
+    grossRaisedAmount: totalRaised,
+    withdrawnAmount: totalWithdrawn,
+    withdrawableAmount,
+    donorCount: Number(donationCount),
+    position: buildPositionFromAddress(record.address),
+    fundingStatus,
+    disbursementStatus
+  }
+}
 
 const fetchMockApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${MOCK_API_BASE_URL}/api/mock${path}`, {
@@ -316,8 +468,10 @@ export const createCampaignOnChain = async (params: {
   description: string
   category: string
   initialDeposit: bigint
-}) => {
-  if (IS_MOCK_BACKEND) {
+}, options?: { forceOnChain?: boolean }) => {
+  const useOnChain = options?.forceOnChain || !IS_MOCK_BACKEND
+
+  if (!useOnChain) {
     const payload = await fetchMockApi<{
       campaign: MockCampaignRecord
       createTxHash: string
@@ -339,7 +493,7 @@ export const createCampaignOnChain = async (params: {
     }
   }
 
-  await ensureSepoliaNetwork()
+  await ensureSepoliaNetwork({ force: useOnChain })
 
   const provider = getWalletProvider()
   const signer = await provider.getSigner()
@@ -404,12 +558,16 @@ export const donateToCampaign = async (
   campaignAddress: string,
   amount: bigint,
   metadata?: {
+    donor?: string
     supporterName?: string
     message?: string
-  }
+  },
+  options?: { forceOnChain?: boolean }
 ) => {
-  if (IS_MOCK_BACKEND) {
-    const donor = getConnectedMockWalletAddress()
+  const useOnChain = options?.forceOnChain || !IS_MOCK_BACKEND
+
+  if (!useOnChain) {
+    const donor = metadata?.donor || getConnectedMockWalletAddress()
     if (!donor) {
       throw new Error('Please connect a wallet before donating')
     }
@@ -427,7 +585,7 @@ export const donateToCampaign = async (
     return payload.txHash
   }
 
-  await ensureSepoliaNetwork()
+  await ensureSepoliaNetwork({ force: useOnChain })
 
   const provider = getWalletProvider()
   const signer = await provider.getSigner()
@@ -448,42 +606,79 @@ export const donateToCampaign = async (
   return receipt.hash as string
 }
 
+export const withdrawCampaignFunds = async (campaignAddress: string, requesterAddress?: string) => {
+  const useOnChain = !IS_MOCK_BACKEND && !requesterAddress
+
+  if (!useOnChain) {
+    const requester = requesterAddress || getConnectedMockWalletAddress()
+    if (!requester) {
+      throw new Error('Please connect the creator wallet before withdrawing')
+    }
+
+    const payload = await fetchMockApi<{ txHash: string }>(`/campaigns/${encodeURIComponent(campaignAddress)}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ requester })
+    })
+
+    return payload.txHash
+  }
+
+  await ensureSepoliaNetwork({ force: true })
+
+  const provider = getWalletProvider()
+  const signer = await provider.getSigner()
+  const campaign = new Contract(campaignAddress, CAMPAIGN_ABI, signer)
+  const tx = await campaign.withdrawFunds()
+  const receipt = await tx.wait()
+
+  return receipt.hash as string
+}
+
+export const processCampaignRefunds = async (campaignAddress: string) => {
+  await ensureSepoliaNetwork({ force: true })
+
+  const provider = getWalletProvider()
+  const signer = await provider.getSigner()
+  const campaign = new Contract(campaignAddress, CAMPAIGN_ABI, signer)
+  const tx = await campaign.processRefunds()
+  const receipt = await tx.wait()
+
+  return receipt.hash as string
+}
+
 export const getTrackedCampaigns = async (): Promise<CampaignSummary[]> => {
   if (IS_MOCK_BACKEND) {
-    const campaigns = await fetchMockApi<MockCampaignRecord[]>('/campaigns')
-    return campaigns
-      .map(toCampaignSummary)
-      .sort((a, b) => b.deadline - a.deadline)
+    const mockCampaigns = await fetchMockApi<MockCampaignRecord[]>('/campaigns')
+    const provider = getReadonlyProvider()
+    const chainCampaignResults = await Promise.allSettled(
+      getStoredCampaigns().map((record) => buildChainCampaignSummary(record, provider))
+    )
+    const chainCampaigns = chainCampaignResults
+      .filter((result): result is PromiseFulfilledResult<CampaignSummary> => result.status === 'fulfilled')
+      .map((result) => result.value)
+
+    const merged = [...mockCampaigns.map(toCampaignSummary), ...chainCampaigns]
+    const uniqueByAddress = new Map<string, CampaignSummary>()
+
+    for (const campaign of merged) {
+      const key = campaign.address.toLowerCase()
+      if (!uniqueByAddress.has(key) || campaign.source === 'chain') {
+        uniqueByAddress.set(key, campaign)
+      }
+    }
+
+    return [...uniqueByAddress.values()].sort((a, b) => b.deadline - a.deadline)
   }
 
   const provider = getReadonlyProvider()
   const stored = getStoredCampaigns()
 
-  const summaries = await Promise.all(
-    stored.map(async (record) => {
-      const campaign = new Contract(record.address, CAMPAIGN_ABI, provider)
-      const [
-        coordinator,
-        goal,
-        deadline,
-        metaCID,
-        totalRaised,
-        donationCount
-      ] = await campaign.getCampaignDetails()
-
-      return {
-        ...record,
-        id: record.address,
-        coordinator,
-        goal,
-        deadline: Number(deadline),
-        metaCID,
-        raised: totalRaised,
-        donorCount: Number(donationCount),
-        position: buildPositionFromAddress(record.address)
-      }
-    })
+  const summaryResults = await Promise.allSettled(
+    stored.map((record) => buildChainCampaignSummary(record, provider))
   )
+  const summaries = summaryResults
+    .filter((result): result is PromiseFulfilledResult<CampaignSummary> => result.status === 'fulfilled')
+    .map((result) => result.value)
 
   return summaries.sort((a, b) => b.deadline - a.deadline)
 }
@@ -494,11 +689,9 @@ export const getTrackedCampaignDetail = async (campaignAddress: string): Promise
       const campaign = await fetchMockApi<MockCampaignRecord>(`/campaigns/${encodeURIComponent(campaignAddress)}`)
       return toCampaignDetail(campaign)
     } catch (error) {
-      if (error instanceof Error && /not found/i.test(error.message)) {
-        return null
+      if (!(error instanceof Error) || !/not found/i.test(error.message)) {
+        throw error
       }
-
-      throw error
     }
   }
 
@@ -512,15 +705,43 @@ export const getTrackedCampaignDetail = async (campaignAddress: string): Promise
 
   const provider = getReadonlyProvider()
   const campaign = new Contract(campaignAddress, CAMPAIGN_ABI, provider)
-  const [
-    coordinator,
-    goal,
-    deadline,
-    metaCID,
-    totalRaised,
-    donationCount
-  ] = await campaign.getCampaignDetails()
-  const donations = await campaign.getDonations()
+  let coordinator: string
+  let goal: bigint
+  let deadline: number
+  let metaCID: string
+  let totalRaised: bigint
+  let donationCount: bigint
+  let totalRefunded: bigint
+  let totalWithdrawn: bigint
+  let withdrawableAmount: bigint
+  let refundsProcessed: boolean
+  let fundsWithdrawn: boolean
+  let donations: Array<{ donor: string; amount: bigint; timestamp: bigint }>
+  let refunds: Array<{ donor: string; amount: bigint; timestamp: bigint }>
+  let withdrawals: Array<{ recipient: string; amount: bigint; timestamp: bigint }>
+
+  try {
+    const details = await campaign.getCampaignDetails()
+    coordinator = details[0]
+    goal = details[1]
+    deadline = Number(details[2])
+    metaCID = details[3]
+    totalRaised = details[4]
+    donationCount = details[5]
+
+    const state = await campaign.getCampaignState()
+    totalRefunded = state[1]
+    totalWithdrawn = state[2]
+    withdrawableAmount = state[3]
+    refundsProcessed = state[4]
+    fundsWithdrawn = state[5]
+
+    donations = await campaign.getDonations()
+    refunds = await campaign.getRefunds()
+    withdrawals = await campaign.getWithdrawals()
+  } catch {
+    return null
+  }
   const storedDonations = getStoredDonations(campaignAddress)
   const normalizedOnChainDonations = donations.map((donation: { donor: string; amount: bigint; timestamp: bigint }) => ({
     donor: donation.donor,
@@ -542,17 +763,41 @@ export const getTrackedCampaignDetail = async (campaignAddress: string): Promise
   }
 
   mergedDonations.sort((a, b) => b.timestamp - a.timestamp)
+  const fundingStatus = deriveFundingStatus(goal, deadline, totalRaised, refundsProcessed)
+  const disbursementStatus = deriveDisbursementStatus(withdrawableAmount, fundsWithdrawn)
+  const netRaised = refundsProcessed ? 0n : totalRaised
 
   return {
     ...record,
     id: campaignAddress,
+    source: 'chain',
     coordinator,
     goal,
-    deadline: Number(deadline),
+    deadline,
     metaCID,
-    raised: totalRaised,
+    raised: netRaised,
+    refundedAmount: totalRefunded,
+    grossRaisedAmount: totalRaised,
+    withdrawnAmount: totalWithdrawn,
+    withdrawableAmount,
     donorCount: Number(donationCount),
     position: buildPositionFromAddress(campaignAddress),
-    donations: mergedDonations
+    fundingStatus,
+    disbursementStatus,
+    donations: mergedDonations,
+    refunds: refunds
+      .map((refund: { donor: string; amount: bigint; timestamp: bigint }) => ({
+        donor: refund.donor,
+        amount: refund.amount,
+        timestamp: Number(refund.timestamp)
+      }))
+      .sort((a: { timestamp: number }, b: { timestamp: number }) => b.timestamp - a.timestamp),
+    withdrawals: withdrawals
+      .map((withdrawal: { recipient: string; amount: bigint; timestamp: bigint }) => ({
+        recipient: withdrawal.recipient,
+        amount: withdrawal.amount,
+        timestamp: Number(withdrawal.timestamp)
+      }))
+      .sort((a: { timestamp: number }, b: { timestamp: number }) => b.timestamp - a.timestamp)
   }
 }

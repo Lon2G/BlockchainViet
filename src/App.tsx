@@ -12,6 +12,7 @@ import AppShell from '@/components/layout/AppShell';
 import Index from "./pages/Index";
 import CreateCampaign from "./pages/CreateCampaign";
 import CampaignDetail from "./pages/CampaignDetail";
+import MyCampaigns from "./pages/MyCampaigns";
 import Wishlist from "./pages/Wishlist";
 import NotFound from "./pages/NotFound";
 
@@ -32,6 +33,7 @@ const App = () => (
                     <Route path="/" element={<Index />} />
                     <Route path="/dashboard" element={<Index />} />
                     <Route path="/create" element={<CreateCampaign />} />
+                    <Route path="/my-campaigns" element={<MyCampaigns />} />
                     <Route path="/campaign/:id" element={<CampaignDetail />} />
                     <Route path="/wishlist" element={<Wishlist />} />
                   </Route>

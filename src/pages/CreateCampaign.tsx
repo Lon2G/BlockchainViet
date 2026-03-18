@@ -46,13 +46,16 @@ export default function CreateCampaign() {
   const { toast } = useToast()
   const { isAuthenticated, openAuthDialog, user } = useAuth()
   const { wallet, openWalletDialog } = useMockWallet()
-  const hasWalletConnection = IS_MOCK_BACKEND ? Boolean(wallet) : isConnected
+  const activeWalletAddress = wallet?.address ?? address
+  const hasWalletConnection = IS_MOCK_BACKEND ? Boolean(activeWalletAddress) : isConnected
+  const isUsingMetaMask = Boolean(isConnected && address && !wallet)
+  const shouldCreateOnChain = isUsingMetaMask
   const canCreateCampaign = isAuthenticated && hasWalletConnection
   const { data: balance } = useBalance({
     address,
     chainId: SEPOLIA_CHAIN.id,
     query: {
-      enabled: Boolean(address) && !IS_MOCK_BACKEND
+      enabled: Boolean(address) && (!IS_MOCK_BACKEND || isUsingMetaMask)
     }
   })
   
@@ -123,7 +126,7 @@ export default function CreateCampaign() {
       }
 
       if (
-        !IS_MOCK_BACKEND &&
+        isUsingMetaMask &&
         balance &&
         formData.initialDeposit &&
         parseFloat(formData.initialDeposit) >= parseFloat(balance.formatted)
@@ -195,7 +198,7 @@ export default function CreateCampaign() {
       const goal = parseEther(formData.goal)
       const initialDeposit = formData.initialDeposit ? parseEther(formData.initialDeposit) : 0n
       const deadline = Math.floor(new Date(formData.deadline).getTime() / 1000)
-      const coordinator = wallet?.address ?? address
+      const coordinator = activeWalletAddress
 
       const result = await createCampaignOnChain({
         coordinator,
@@ -205,13 +208,17 @@ export default function CreateCampaign() {
         goal,
         deadline,
         initialDeposit
-      })
+      }, { forceOnChain: shouldCreateOnChain })
       
       toast({
         title: "Campaign Created Successfully!",
         description: result.donationTxHash
-          ? 'Your campaign is now live and its opening contribution has been recorded.'
-          : 'Your campaign is now live and ready to receive donations.',
+          ? shouldCreateOnChain
+            ? 'Your on-chain campaign is now live and its opening MetaMask contribution has been recorded.'
+            : 'Your campaign is now live and its opening contribution has been recorded.'
+          : shouldCreateOnChain
+            ? 'Your on-chain campaign is now live and ready to receive MetaMask donations.'
+            : 'Your campaign is now live and ready to receive donations.',
       })
 
       await Promise.all([
@@ -268,17 +275,27 @@ export default function CreateCampaign() {
                   <p className="font-medium">Campaign Status</p>
                   <p className="text-sm text-muted-foreground">
                     {IS_MOCK_BACKEND
-                      ? 'Your campaign workspace is ready and available for publishing.'
+                      ? shouldCreateOnChain
+                        ? 'This campaign will be deployed on Sepolia because MetaMask is connected.'
+                        : 'Your campaign workspace is ready and available for publishing.'
                       : 'Campaign deploy and initial funding both use Ethereum Sepolia.'}
                   </p>
                 </div>
                 <Badge variant={IS_MOCK_BACKEND || chainId === SEPOLIA_CHAIN.id ? 'default' : 'destructive'}>
-                  {IS_MOCK_BACKEND ? 'Ready' : chainId === SEPOLIA_CHAIN.id ? 'Sepolia ready' : 'Switch MetaMask to Sepolia'}
+                  {IS_MOCK_BACKEND
+                    ? shouldCreateOnChain
+                      ? 'Sepolia deploy'
+                      : 'Ready'
+                    : chainId === SEPOLIA_CHAIN.id
+                        ? 'Sepolia ready'
+                        : 'Switch MetaMask to Sepolia'}
                 </Badge>
               </div>
               <p className="mt-3 text-sm text-muted-foreground">
                 {IS_MOCK_BACKEND
-                  ? 'You can publish campaigns and track contributions immediately.'
+                  ? shouldCreateOnChain
+                    ? `Wallet balance: ${balance ? `${Number(balance.formatted).toFixed(4)} ${balance.symbol}` : 'Loading...'}`
+                    : 'You can publish campaigns and track contributions immediately.'
                   : `Wallet balance: ${balance ? `${Number(balance.formatted).toFixed(4)} ${balance.symbol}` : 'Loading...'}`}
               </p>
             </div>
@@ -311,7 +328,9 @@ export default function CreateCampaign() {
               </div>
               <p className="text-sm text-muted-foreground">
                 {IS_MOCK_BACKEND
-                  ? 'Optional. Add an opening contribution when the campaign is created.'
+                  ? shouldCreateOnChain
+                    ? 'Optional. If you enter an amount here, MetaMask will send that SepoliaETH into the new campaign contract after deployment.'
+                    : 'Optional. Add an opening contribution when the campaign is created.'
                   : 'Optional. If you enter an amount here, MetaMask will send that SepoliaETH directly into the new campaign contract right after deployment.'}
               </p>
             </div>
@@ -436,7 +455,9 @@ export default function CreateCampaign() {
                     <p className="text-sm text-muted-foreground">
                       {hasWalletConnection
                         ? IS_MOCK_BACKEND
-                          ? `${wallet?.name} is connected`
+                          ? wallet
+                            ? `${wallet.name} is connected`
+                            : 'MetaMask wallet is connected'
                           : 'Blockchain wallet is connected'
                         : 'No wallet connected yet.'}
                     </p>
@@ -537,7 +558,11 @@ export default function CreateCampaign() {
                   onClick={handleSubmit}
                   disabled={isSubmitting}
                 >
-                  {isSubmitting ? 'Deploying...' : 'Deploy Campaign'}
+                  {isSubmitting
+                    ? 'Deploying...'
+                    : shouldCreateOnChain
+                        ? 'Deploy On-Chain Campaign'
+                        : 'Deploy Campaign'}
                 </Button>
               ) : (
                 <Button

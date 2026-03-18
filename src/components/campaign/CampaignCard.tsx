@@ -9,12 +9,14 @@ interface CampaignCardProps {
   id: string
   title: string
   description: string
+  source?: 'mock' | 'chain' | 'demo'
   category?: string
   coordinator: string
   goal: bigint
   raised: bigint
   deadline: number
   donorCount: number
+  fundingStatus?: 'active' | 'goal-reached' | 'successful' | 'expired' | 'refunded'
   onDonate?: () => void
   onViewDetails?: () => void
 }
@@ -23,33 +25,53 @@ export default function CampaignCard({
   id,
   title,
   description,
+  source,
   category,
   coordinator,
   goal,
   raised,
   deadline,
   donorCount,
+  fundingStatus,
   onDonate,
   onViewDetails
 }: CampaignCardProps) {
   const progress = Number(raised) / Number(goal) * 100
   const daysLeft = Math.max(0, Math.ceil((deadline * 1000 - Date.now()) / (1000 * 60 * 60 * 24)))
   const isCompleted = progress >= 100
-  const isExpired = daysLeft === 0 && !isCompleted
+  const isRefunded = fundingStatus === 'refunded'
+  const isExpired = (daysLeft === 0 && !isCompleted) || fundingStatus === 'expired'
 
   const frontContent = (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div className="space-y-2">
           <h3 className="font-semibold text-lg leading-tight">{title}</h3>
-          {category && (
-            <Badge variant="outline" className="w-fit">
-              {category}
-            </Badge>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {category && (
+              <Badge variant="outline" className="w-fit">
+                {category}
+              </Badge>
+            )}
+            {source === 'chain' && (
+              <Badge variant="secondary" className="w-fit">
+                On-chain
+              </Badge>
+            )}
+            {source === 'mock' && (
+              <Badge variant="outline" className="w-fit">
+                Mock
+              </Badge>
+            )}
+            {source === 'demo' && (
+              <Badge variant="outline" className="w-fit">
+                Demo
+              </Badge>
+            )}
+          </div>
         </div>
-        <Badge variant={isCompleted ? "default" : isExpired ? "destructive" : "secondary"}>
-          {isCompleted ? "Completed" : isExpired ? "Expired" : `${daysLeft}d left`}
+        <Badge variant={isCompleted ? "default" : isExpired || isRefunded ? "destructive" : "secondary"}>
+          {isRefunded ? "Refunded" : isCompleted ? "Completed" : isExpired ? "Expired" : `${daysLeft}d left`}
         </Badge>
       </div>
       
@@ -115,14 +137,14 @@ export default function CampaignCard({
         >
           View Details
         </Button>
-        {!isCompleted && !isExpired && (
+        {!isCompleted && !isExpired && !isRefunded && (
           <Button 
             variant="donate" 
             className="w-full" 
             onClick={onDonate}
           >
             <Target className="w-4 h-4 mr-2" />
-            Donate Now
+            {source === 'chain' ? 'Donate On-Chain' : 'Donate Demo'}
           </Button>
         )}
       </div>
