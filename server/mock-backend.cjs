@@ -54,6 +54,8 @@ const defaultDb = {
       txHash: "0x3a8f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a101",
       createdAt: "2026-03-17T09:00:00.000Z",
       metaCID: "peduli:seed-1",
+      refunds: [],
+      withdrawals: [],
       donations: [
         {
           donor: "0x1111111111111111111111111111111111111111",
@@ -81,6 +83,8 @@ const defaultDb = {
       txHash: "0x7a7f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a202",
       createdAt: "2026-03-17T09:15:00.000Z",
       metaCID: "peduli:seed-2",
+      refunds: [],
+      withdrawals: [],
       donations: [
         {
           donor: "0x3333333333333333333333333333333333333333",
@@ -108,6 +112,8 @@ const defaultDb = {
       txHash: "0x8b7f8a8a9a4a1d6cd20a4d3fbb2f2a170fd9cb26f7b8e960d92d7cbcc2f2a303",
       createdAt: "2026-03-17T09:30:00.000Z",
       metaCID: "peduli:seed-3",
+      refunds: [],
+      withdrawals: [],
       donations: [
         {
           donor: "0x5555555555555555555555555555555555555555",
@@ -160,17 +166,20 @@ const ensureDb = async () => {
   }
 };
 
+const normalizeCampaignRecord = (campaign) => ({
+  ...campaign,
+  donations: Array.isArray(campaign.donations) ? campaign.donations : [],
+  refunds: Array.isArray(campaign.refunds) ? campaign.refunds : [],
+  withdrawals: Array.isArray(campaign.withdrawals) ? campaign.withdrawals : []
+});
+
 const normalizeDb = (db) => ({
   users: Array.isArray(db.users) ? db.users : defaultDb.users,
   googleAccounts: Array.isArray(db.googleAccounts) ? db.googleAccounts : defaultDb.googleAccounts,
-  campaigns: Array.isArray(db.campaigns) ? db.campaigns : defaultDb.campaigns
+  campaigns: Array.isArray(db.campaigns)
+    ? db.campaigns.map(normalizeCampaignRecord)
+    : defaultDb.campaigns.map(normalizeCampaignRecord)
 });
-
-const readDb = async () => {
-  await ensureDb();
-  const raw = await fs.readFile(DB_PATH, "utf8");
-  return normalizeDb(JSON.parse(raw));
-};
 
 const writeDb = async (db) => {
   await fs.writeFile(DB_PATH, JSON.stringify(normalizeDb(db), null, 2));
@@ -179,6 +188,7 @@ const writeDb = async (db) => {
 const fakeHash = () => `0x${crypto.randomBytes(32).toString("hex")}`;
 const fakeAddress = () => `0x${crypto.randomBytes(20).toString("hex")}`;
 const hashPassword = (value) => crypto.createHash("sha256").update(String(value)).digest("hex");
+const nowInSeconds = () => Math.floor(Date.now() / 1000);
 const toAuthUser = (user) => ({
   id: user.id,
   name: user.name,
@@ -187,10 +197,123 @@ const toAuthUser = (user) => ({
   provider: user.provider
 });
 
-const normalizeCampaign = (campaign) => ({
-  ...campaign,
-  donations: [...campaign.donations].sort((a, b) => b.timestamp - a.timestamp)
-});
+const getGrossRaisedAmount = (campaign) => (
+  normalizeCampaignRecord(campaign).donations.reduce((total, donation) => total + BigInt(donation.amount || "0"), 0n)
+);
+
+const getRefundedAmount = (campaign) => (
+  normalizeCampaignRecord(campaign).refunds.reduce((total, refund) => total + BigInt(refund.amount || "0"), 0n)
+);
+
+const getNetRaisedAmount = (campaign) => {
+  const grossRaised = getGrossRaisedAmount(campaign);
+  const refunded = getRefundedAmount(campaign);
+  return grossRaised > refunded ? grossRaised - refunded : 0n;
+};
+
+const getWithdrawnAmount = (campaign) => (
+  normalizeCampaignRecord(campaign).withdrawals.reduce((total, withdrawal) => total + BigInt(withdrawal.amount || "0"), 0n)
+);
+
+const getWithdrawableAmount = (campaign) => {
+  const normalized = normalizeCampaignRecord(campaign);
+  const goal = BigInt(normalized.goal || "0");
+  const netRaised = getNetRaisedAmount(normalized);
+  const withdrawn = getWithdrawnAmount(normalized);
+
+  if (normalized.refunds.length > 0 || netRaised < goal) {
+    return 0n;
+  }
+
+  return netRaised > withdrawn ? netRaised - withdrawn : 0n;
+};
+
+const getFundingStatus = (campaign, now = nowInSeconds()) => {
+  const normalized = normalizeCampaignRecord(campaign);
+  const goal = BigInt(normalized.goal || "0");
+  const netRaised = getNetRaisedAmount(normalized);
+  const expired = Number(normalized.deadline || 0) <= now;
+
+  if (normalized.refunds.length > 0) {
+    return "refunded";
+  }
+
+  if (netRaised >= goal && goal > 0n) {
+    return expired ? "successful" : "goal-reached";
+  }
+
+  return expired ? "expired" : "active";
+};
+
+const maybeAutoRefundCampaign = (campaign, now = nowInSeconds()) => {
+  const normalized = normalizeCampaignRecord(campaign);
+  const goal = BigInt(normalized.goal || "0");
+  const grossRaised = getGrossRaisedAmount(normalized);
+  const expired = Number(normalized.deadline || 0) <= now;
+
+  if (!expired || grossRaised >= goal || normalized.refunds.length > 0) {
+    return false;
+  }
+
+  normalized.refunds = normalized.donations.map((donation) => ({
+    donor: donation.donor,
+    amount: String(donation.amount),
+    timestamp: now,
+    txHash: fakeHash(),
+    donationTxHash: donation.txHash,
+    supporterName: donation.supporterName,
+    message: donation.message
+  }));
+  normalized.refundProcessedAt = new Date(now * 1000).toISOString();
+
+  Object.assign(campaign, normalized);
+  return true;
+};
+
+const applyCampaignPolicies = (db) => {
+  let changed = false;
+  const now = nowInSeconds();
+
+  db.campaigns.forEach((campaign) => {
+    if (maybeAutoRefundCampaign(campaign, now)) {
+      changed = true;
+    }
+  });
+
+  return changed;
+};
+
+const readDb = async () => {
+  await ensureDb();
+  const raw = await fs.readFile(DB_PATH, "utf8");
+  const db = normalizeDb(JSON.parse(raw));
+
+  if (applyCampaignPolicies(db)) {
+    await writeDb(db);
+  }
+
+  return db;
+};
+
+const normalizeCampaign = (campaign) => {
+  const normalized = normalizeCampaignRecord(campaign);
+  const withdrawnAmount = getWithdrawnAmount(normalized);
+  const withdrawableAmount = getWithdrawableAmount(normalized);
+
+  return {
+    ...normalized,
+    donations: [...normalized.donations].sort((a, b) => b.timestamp - a.timestamp),
+    refunds: [...normalized.refunds].sort((a, b) => b.timestamp - a.timestamp),
+    withdrawals: [...normalized.withdrawals].sort((a, b) => b.timestamp - a.timestamp),
+    grossRaisedAmount: getGrossRaisedAmount(normalized).toString(),
+    refundedAmount: getRefundedAmount(normalized).toString(),
+    raisedAmount: getNetRaisedAmount(normalized).toString(),
+    withdrawnAmount: withdrawnAmount.toString(),
+    withdrawableAmount: withdrawableAmount.toString(),
+    fundingStatus: getFundingStatus(normalized),
+    disbursementStatus: withdrawableAmount > 0n ? "available" : withdrawnAmount > 0n ? "withdrawn" : "locked"
+  };
+};
 
 const notFound = (res, message = "Resource not found") => sendJson(res, 404, { error: message });
 
@@ -330,9 +453,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/mock/campaigns") {
       const db = await readDb();
       const body = await readBody(req);
+      const goal = BigInt(String(body.goal || "0"));
+      const deadline = Number(body.deadline || nowInSeconds());
 
       if (!body.title || !body.description || !body.category) {
         return sendJson(res, 400, { error: "Missing required campaign fields" });
+      }
+
+      if (goal <= 0n) {
+        return sendJson(res, 400, { error: "Funding goal must be greater than 0." });
+      }
+
+      if (!Number.isFinite(deadline) || deadline <= nowInSeconds()) {
+        return sendJson(res, 400, { error: "Campaign deadline must be in the future." });
       }
 
       const createTxHash = fakeHash();
@@ -343,12 +476,14 @@ const server = http.createServer(async (req, res) => {
         description: String(body.description).trim(),
         category: String(body.category).trim(),
         coordinator: body.coordinator || fakeAddress(),
-        goal: String(body.goal || "0"),
-        deadline: Number(body.deadline || Math.floor(Date.now() / 1000)),
+        goal: goal.toString(),
+        deadline,
         initialDeposit: String(body.initialDeposit || "0"),
         txHash: donationTxHash || createTxHash,
         createdAt: new Date().toISOString(),
         metaCID: `peduli:mock-${crypto.randomUUID()}`,
+        refunds: [],
+        withdrawals: [],
         donations: []
       };
 
@@ -356,7 +491,7 @@ const server = http.createServer(async (req, res) => {
         campaign.donations.push({
           donor: campaign.coordinator,
           amount: campaign.initialDeposit,
-          timestamp: Math.floor(Date.now() / 1000),
+          timestamp: nowInSeconds(),
           txHash: donationTxHash
         });
       }
@@ -382,6 +517,21 @@ const server = http.createServer(async (req, res) => {
         return notFound(res, "Campaign not found");
       }
 
+      const now = nowInSeconds();
+      const status = getFundingStatus(campaign, now);
+      if (status === "refunded") {
+        await writeDb(db);
+        return sendJson(res, 409, {
+          error: "This campaign expired before reaching its goal. All donations were refunded automatically."
+        });
+      }
+
+      if (Number(campaign.deadline || 0) <= now) {
+        return sendJson(res, 409, {
+          error: "This campaign is closed because its funding window has ended."
+        });
+      }
+
       const body = await readBody(req);
       if (!body.donor || !body.amount || BigInt(body.amount) <= 0n) {
         return sendJson(res, 400, { error: "Invalid donation payload" });
@@ -391,10 +541,54 @@ const server = http.createServer(async (req, res) => {
       campaign.donations.unshift({
         donor: body.donor,
         amount: String(body.amount),
-        timestamp: Math.floor(Date.now() / 1000),
+        timestamp: now,
         txHash,
         supporterName: body.supporterName ? String(body.supporterName).trim() : undefined,
         message: body.message ? String(body.message).trim() : undefined
+      });
+
+      await writeDb(db);
+      return sendJson(res, 201, { txHash, campaign: normalizeCampaign(campaign) });
+    }
+
+    if (req.method === "POST" && pathname.endsWith("/withdraw") && pathname.startsWith("/api/mock/campaigns/")) {
+      const campaignId = decodeURIComponent(
+        pathname.replace("/api/mock/campaigns/", "").replace(/\/withdraw$/, "")
+      );
+      const db = await readDb();
+      const campaign = db.campaigns.find((item) => item.address.toLowerCase() === campaignId.toLowerCase());
+
+      if (!campaign) {
+        return notFound(res, "Campaign not found");
+      }
+
+      const body = await readBody(req);
+      const requester = String(body.requester || "").trim().toLowerCase();
+      if (!requester) {
+        return sendJson(res, 400, { error: "Requester wallet is required." });
+      }
+
+      if (String(campaign.coordinator || "").toLowerCase() !== requester) {
+        return sendJson(res, 403, { error: "Only the campaign creator can withdraw funds." });
+      }
+
+      if (getFundingStatus(campaign) === "refunded") {
+        return sendJson(res, 409, { error: "This campaign was refunded, so there are no funds available to withdraw." });
+      }
+
+      const withdrawableAmount = getWithdrawableAmount(campaign);
+      if (withdrawableAmount <= 0n) {
+        return sendJson(res, 409, {
+          error: "Funds can only be withdrawn after the campaign reaches its full funding goal."
+        });
+      }
+
+      const txHash = fakeHash();
+      campaign.withdrawals.unshift({
+        recipient: campaign.coordinator,
+        amount: withdrawableAmount.toString(),
+        timestamp: nowInSeconds(),
+        txHash
       });
 
       await writeDb(db);

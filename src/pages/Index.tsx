@@ -1,6 +1,7 @@
 import { useDeferredValue, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useAccount } from 'wagmi'
 import Globe from '@/components/3d/Globe'
 import CampaignCard from '@/components/campaign/CampaignCard'
 import { Button } from '@/components/ui/button'
@@ -19,10 +20,12 @@ type StatusFilter = 'all' | 'active' | 'ending-soon' | 'funded' | 'expired'
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { address } = useAccount()
   const exploreSectionRef = useRef<HTMLElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const { isAuthenticated, openAuthDialog } = useAuth()
   const { wallet, openWalletDialog } = useMockWallet()
+  const activeWalletAddress = wallet?.address ?? address
   const { followedCampaignIds } = useWishlist()
   const { data: trackedCampaigns = [] } = useQuery({
     queryKey: ['tracked-campaigns'],
@@ -117,7 +120,7 @@ export default function Dashboard() {
       return
     }
 
-    if (IS_MOCK_BACKEND && !wallet) {
+    if (IS_MOCK_BACKEND && !activeWalletAddress) {
       openWalletDialog()
       return
     }

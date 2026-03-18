@@ -15,6 +15,39 @@ export default function WalletConnect() {
   const { wallet, openWalletDialog, disconnectMockWallet } = useMockWallet()
 
   if (IS_MOCK_BACKEND) {
+    if (isConnected && address) {
+      return (
+        <div className="flex items-center gap-2">
+          <Badge variant={isOnSepolia ? 'default' : 'destructive'}>
+            {isOnSepolia ? 'MetaMask' : 'Wrong network'}
+          </Badge>
+          <Badge variant="outline" className="font-mono">
+            {shortenAddress(address)}
+          </Badge>
+          {!isOnSepolia && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void ensureSepoliaNetwork({ force: true })}
+            >
+              Switch
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={openWalletDialog}>
+            Switch
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => disconnect()}
+            className="hover:bg-destructive/10 hover:text-destructive"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
+      )
+    }
+
     if (wallet) {
       return (
         <div className="flex items-center gap-2">
@@ -62,7 +95,7 @@ export default function WalletConnect() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void ensureSepoliaNetwork()}
+            onClick={() => void ensureSepoliaNetwork({ force: true })}
           >
             Switch
           </Button>

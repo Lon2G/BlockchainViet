@@ -1,13 +1,19 @@
 import { Link, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { useAccount } from 'wagmi'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useWishlist } from '@/contexts/WishlistContext'
-import { Heart, Home, LayoutDashboard, Plus } from 'lucide-react'
+import { useMockWallet } from '@/contexts/MockWalletContext'
+import { getTrackedCampaigns } from '@/lib/campaigns'
+import { IS_MOCK_BACKEND } from '@/lib/web3'
+import { FolderHeart, Heart, Home, LayoutDashboard, Plus } from 'lucide-react'
 
 const navItems = [
   { path: '/', label: 'Homepage', icon: Home },
   { path: '/create', label: 'Create Campaign', icon: Plus },
+  { path: '/my-campaigns', label: 'My Campaigns', icon: FolderHeart },
   { path: '/wishlist', label: 'Wishlist', icon: Heart },
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }
 ]
@@ -15,6 +21,16 @@ const navItems = [
 export default function SidebarNav({ mobile = false }: { mobile?: boolean }) {
   const location = useLocation()
   const { followedCampaignIds } = useWishlist()
+  const { address } = useAccount()
+  const { wallet } = useMockWallet()
+  const currentAddress = (wallet?.address ?? address)?.toLowerCase() ?? ''
+  const { data: trackedCampaigns = [] } = useQuery({
+    queryKey: ['tracked-campaigns'],
+    queryFn: getTrackedCampaigns
+  })
+  const createdCampaignCount = currentAddress
+    ? trackedCampaigns.filter((campaign) => campaign.coordinator.toLowerCase() === currentAddress).length
+    : 0
 
   return (
     <div className={cn('space-y-2', mobile && 'flex gap-2 overflow-x-auto space-y-0 pb-1')}>
@@ -37,6 +53,11 @@ export default function SidebarNav({ mobile = false }: { mobile?: boolean }) {
               {item.path === '/wishlist' && (
                 <Badge variant="outline" className="ml-auto">
                   {followedCampaignIds.length}
+                </Badge>
+              )}
+              {item.path === '/my-campaigns' && (
+                <Badge variant="outline" className="ml-auto">
+                  {createdCampaignCount}
                 </Badge>
               )}
             </Button>

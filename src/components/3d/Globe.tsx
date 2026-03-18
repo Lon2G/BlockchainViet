@@ -27,6 +27,20 @@ interface GlobeProps {
 
 const worldUp = new Vector3(0, 1, 0)
 const earthNormalScale = new Vector2(0.85, 0.85)
+const compactNumberFormatter = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumFractionDigits: 2
+})
+
+const formatPanelEth = (value: bigint) => {
+  const numericValue = Number(formatEther(value))
+
+  if (Math.abs(numericValue) >= 1000) {
+    return `${compactNumberFormatter.format(numericValue)} ETH`
+  }
+
+  return `${formatEther(value)} ETH`
+}
 
 function CampaignMarker({
   campaign,
@@ -326,11 +340,11 @@ export default function Globe({ campaigns, onCampaignClick }: GlobeProps) {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-border bg-background/60 p-4">
                   <p className="text-xs text-muted-foreground">Raised</p>
-                  <p className="mt-1 text-lg font-semibold">{formatEther(selectedCampaign.raised)} ETH</p>
+                  <p className="mt-1 text-lg font-semibold leading-tight">{formatPanelEth(selectedCampaign.raised)}</p>
                 </div>
                 <div className="rounded-2xl border border-border bg-background/60 p-4">
                   <p className="text-xs text-muted-foreground">Target</p>
-                  <p className="mt-1 text-lg font-semibold">{formatEther(selectedCampaign.goal)} ETH</p>
+                  <p className="mt-1 text-lg font-semibold leading-tight">{formatPanelEth(selectedCampaign.goal)}</p>
                 </div>
                 <div className="rounded-2xl border border-border bg-background/60 p-4">
                   <p className="text-xs text-muted-foreground">Donors</p>

@@ -2,13 +2,13 @@ const { ethers } = require("hardhat");
 const hre = require("hardhat");
 
 async function main() {
-  console.log("Deploying PeduliChain contracts to Lisk Sepolia...");
+  console.log("Deploying PeduliChain contracts to Sepolia...");
 
   // Get the deployer account
   const [deployer] = await ethers.getSigners();
   console.log("Deploying contracts with account:", deployer.address);
   const balance = await ethers.provider.getBalance(deployer.address);
-  console.log("Account balance:", balance.toString());
+  console.log("Account balance:", ethers.formatEther(balance), "ETH");
 
   // Deploy CampaignFactory
   const CampaignFactory = await ethers.getContractFactory("CampaignFactory");
@@ -37,8 +37,8 @@ async function main() {
 
   // Save deployment info
   const deploymentInfo = {
-    network: "liskSepolia",
-    campaignFactory: campaignFactory.address,
+    network: hre.network.name,
+    campaignFactory: factoryAddress,
     sampleCampaign: campaigns[0],
     deployer: deployer.address,
     timestamp: new Date().toISOString()
@@ -46,6 +46,7 @@ async function main() {
 
   console.log("\n=== Deployment Summary ===");
   console.log(JSON.stringify(deploymentInfo, null, 2));
+  console.log(`VITE_CAMPAIGN_FACTORY_ADDRESS=${factoryAddress}`);
   console.log("=========================\n");
 
   // Verify contracts on block explorer

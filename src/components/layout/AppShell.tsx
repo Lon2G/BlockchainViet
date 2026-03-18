@@ -28,9 +28,6 @@ export default function AppShell() {
                 </Avatar>
                 <div>
                   <p className="text-lg font-semibold">{user?.name ?? 'Guest User'}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {user?.email ?? 'Not signed in'}
-                  </p>
                 </div>
               </div>
             </div>

@@ -15,6 +15,8 @@ export interface GoogleAccount extends AuthUser {
 const AUTH_STORAGE_KEY = 'pedulichain.auth.user.v2'
 const GOOGLE_IDENTITY_SCRIPT_URL = 'https://accounts.google.com/gsi/client'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || ''
+const GOOGLE_SIGN_IN_TROUBLESHOOTING =
+  'If the Google popup does not sign you in, make sure this Gmail is added in Google Auth Platform > Audience > Test users and that http://localhost:8080 is listed in Authorized JavaScript origins.'
 
 let googleIdentityScriptPromise: Promise<void> | null = null
 
@@ -177,7 +179,7 @@ export const signInWithGoogleReal = async (): Promise<AuthUser> => {
       scope: 'openid email profile',
       callback: async (response) => {
         if (response.error || !response.access_token) {
-          reject(new Error(response.error_description || response.error || 'Google sign-in failed.'))
+          reject(new Error(`${response.error_description || response.error || 'Google sign-in failed.'} ${GOOGLE_SIGN_IN_TROUBLESHOOTING}`))
           return
         }
 
@@ -210,11 +212,16 @@ export const signInWithGoogleReal = async (): Promise<AuthUser> => {
             provider: 'google'
           })
         } catch (error) {
-          reject(error instanceof Error ? error : new Error('Google sign-in failed.'))
+          if (error instanceof Error) {
+            reject(new Error(`${error.message} ${GOOGLE_SIGN_IN_TROUBLESHOOTING}`))
+            return
+          }
+
+          reject(new Error(`Google sign-in failed. ${GOOGLE_SIGN_IN_TROUBLESHOOTING}`))
         }
       },
       error_callback: (error) => {
-        reject(new Error(error.type === 'popup_closed' ? 'Google sign-in was cancelled.' : 'Google sign-in failed to open.'))
+        reject(new Error(`${error.type === 'popup_closed' ? 'Google sign-in was cancelled.' : 'Google sign-in failed to open.'} ${GOOGLE_SIGN_IN_TROUBLESHOOTING}`))
       }
     })
 
@@ -223,6 +230,6 @@ export const signInWithGoogleReal = async (): Promise<AuthUser> => {
       return
     }
 
-    tokenClient.requestAccessToken({ prompt: 'select_account consent' })
+    tokenClient.requestAccessToken({ prompt: 'select_account' })
   })
 }

@@ -12,7 +12,7 @@ export const SEPOLIA_CHAIN = sepolia
 export const SEPOLIA_CHAIN_ID_HEX = `0x${SEPOLIA_CHAIN.id.toString(16)}`
 
 export const CONTRACTS = {
-  CAMPAIGN_FACTORY: '0xEb322c3727fDFb28DCA3C264aA0EF912eDF6d47c' as const
+  CAMPAIGN_FACTORY: (import.meta.env.VITE_CAMPAIGN_FACTORY_ADDRESS || '0xEb322c3727fDFb28DCA3C264aA0EF912eDF6d47c') as `0x${string}`
 }
 
 export const config = createConfig({
